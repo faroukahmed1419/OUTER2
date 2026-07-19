@@ -2237,10 +2237,13 @@ body.lang-en .nt-index-search i,body.lang-en .clp-row .clp-url{right:auto;}
 body.lang-en .nt-index-search i{left:14px;}
 body.lang-en .nt-index-search input{padding:10px 14px 10px 40px;}
 body.lang-en .clp-fab{inset-inline-start:auto;inset-inline-end:26px;}
-body.lang-en .btn,body.lang-en .sett-tab,body.lang-en .nt-tab,body.lang-en .lang-switch-btn,body.lang-en .type-tab,body.lang-en .theme-card span{
+body.lang-en .btn,body.lang-en .sett-tab,body.lang-en .nt-tab,body.lang-en .lang-switch-btn,body.lang-en .type-tab,body.lang-en .theme-card span,body.lang-en .ct-ctab{
   white-space:normal;text-align:center;line-height:1.3;word-break:break-word;
 }
 body.lang-en .btn{min-height:34px;}
+body.lang-en .ct-ctab{min-width:66px;font-size:.72rem;padding:6px 4px;}
+/* numeric sliders (RGB / opacity / blur) should always drag left→right regardless of UI language */
+input[type="range"]{direction:ltr;}
 body.lang-en .page-actions .btn,body.lang-en .modal-footer .btn{flex-shrink:0;}
 
 </style>
@@ -7295,7 +7298,7 @@ let _clpDetected = [];
   const fab = document.createElement('button');
   fab.className = 'clp-fab';
   fab.id = 'clpFab';
-  fab.title = _t('فحص الحافظة عن روابط', 'Scan clipboard for links');
+  fab.title = _t('استيراد روابط من الحافظة', 'Import links from clipboard');
   fab.innerHTML = '<i class="fas fa-clipboard-list"></i>';
   fab.onclick = clpOpenScanner;
   document.body.appendChild(fab);
@@ -7308,16 +7311,14 @@ let _clpDetected = [];
       <button class="modal-close" onclick="closeModal('modalClipboard')"><i class="fas fa-times"></i></button>
       <h2><i class="fas fa-clipboard-list"></i> <span id="clpModalTitle">${_t('استيراد روابط من الحافظة', 'Import links from clipboard')}</span></h2>
       <div class="form-group">
-        <button class="btn btn-primary" style="width:100%;" onclick="clpScanClipboard()"><i class="fas fa-paste"></i> ${_t('اقرأ الحافظة الآن', 'Read clipboard now')}</button>
+        <label>${_t('الصق الروابط هنا (أي عدد، حتى لو ٣٠ رابط منفصل)', 'Paste links here (any number, even 30 separate links)')}</label>
+        <textarea id="clpManualText" rows="5" placeholder="https://... https://... https://..."></textarea>
+      </div>
+      <div class="form-group" style="display:flex;gap:8px;">
+        <button class="btn btn-primary" style="flex:1;" onclick="clpProcessManual()"><i class="fas fa-search"></i> ${_t('فحص الروابط', 'Scan links')}</button>
+        <button class="btn" style="flex:1;" onclick="clpScanClipboard()"><i class="fas fa-paste"></i> ${_t('أو اقرأ الحافظة تلقائياً', 'Or auto-read clipboard')}</button>
       </div>
       <p id="clpStatus" style="font-size:.8rem;color:var(--muted);margin-bottom:8px;"></p>
-      <div id="clpManualWrap" style="display:none;">
-        <div class="form-group">
-          <label>${_t('أو الصق الروابط هنا يدوياً', 'Or paste links here manually')}</label>
-          <textarea id="clpManualText" rows="4" placeholder="https://... https://..."></textarea>
-        </div>
-        <button class="btn" style="width:100%;margin-bottom:10px;" onclick="clpProcessManual()"><i class="fas fa-search"></i> ${_t('فحص النص', 'Scan text')}</button>
-      </div>
       <div id="clpList" class="clp-list"></div>
       <div class="form-group" id="clpCatWrap" style="display:none;">
         <label>${_t('احفظ الروابط المختارة في تصنيف', 'Save selected links to a category')}</label>
@@ -7329,33 +7330,42 @@ let _clpDetected = [];
       </div>
     </div>`;
   document.body.appendChild(modal);
+  // pasting (Ctrl+V) into the textarea needs no special permission at all — scan right away
+  modal.querySelector('#clpManualText').addEventListener('paste', () => setTimeout(clpProcessManual, 30));
 })();
 
 function clpOpenScanner() {
   _clpDetected = [];
   document.getElementById('clpStatus').textContent = '';
   document.getElementById('clpList').innerHTML = '';
-  document.getElementById('clpManualWrap').style.display = 'none';
   document.getElementById('clpManualText').value = '';
   document.getElementById('clpCatWrap').style.display = 'none';
   document.getElementById('clpFooter').style.display = 'none';
   populateCatSelect('clpCatSelect', null);
   openModal('modalClipboard');
+  setTimeout(() => document.getElementById('clpManualText').focus(), 50);
 }
 
 async function clpScanClipboard() {
   const statusEl = document.getElementById('clpStatus');
+  if (!window.isSecureContext) {
+    statusEl.textContent = _t('القراءة التلقائية للحافظة تحتاج فتح الموقع عبر https (أو استضافته)، ومش شغالة لو فتحت الملف مباشرة من جهازك. الصق الروابط بالأعلى بدلاً من ذلك — بتشتغل دايماً بدون أي إذن.', "Automatic clipboard reading needs the page opened over https (or hosted), and won't work when opening the file directly from your device. Paste links above instead — that always works with no permission needed.");
+    return;
+  }
   if (!navigator.clipboard || !navigator.clipboard.readText) {
-    statusEl.textContent = _t('المتصفح لا يدعم قراءة الحافظة تلقائياً — الصق الروابط يدوياً بالأسفل.', "This browser doesn't support automatic clipboard reading — paste links manually below.");
-    document.getElementById('clpManualWrap').style.display = 'block';
+    statusEl.textContent = _t('المتصفح لا يدعم قراءة الحافظة تلقائياً — الصق الروابط بالأعلى.', "This browser doesn't support automatic clipboard reading — paste links above.");
     return;
   }
   try {
     const text = await navigator.clipboard.readText();
+    if (!text || !text.trim()) {
+      statusEl.textContent = _t('الحافظة فارغة أو لا تحتوي على نص — الصق الروابط بالأعلى يدوياً.', 'The clipboard is empty or has no text — paste links above manually.');
+      return;
+    }
+    document.getElementById('clpManualText').value = text;
     clpProcessText(text);
   } catch (e) {
-    statusEl.textContent = _t('تعذر الوصول للحافظة (يحتاج إذن) — الصق الروابط يدوياً بالأسفل.', 'Could not access the clipboard (permission needed) — paste links manually below.');
-    document.getElementById('clpManualWrap').style.display = 'block';
+    statusEl.textContent = _t('تم رفض إذن الحافظة من المتصفح — الصق الروابط بالأعلى بدلاً من ذلك (لا يحتاج أي إذن).', 'The browser denied clipboard permission — paste links above instead (needs no permission at all).');
   }
 }
 
@@ -7720,10 +7730,12 @@ function clConfirmCreateFromModal() {
   }
 })();
 
-// ── E. Richer background effects: brighter Matrix + GTA / Metal Gear / Silent Hill ──
+// ── E. Richer background effects: brighter Matrix + a themed effects library ──
 document.head.insertAdjacentHTML('beforeend', `<style>
-#fxGtaCanvas,#fxMgsCanvas,#fxShCanvas{position:fixed;inset:0;z-index:-1;pointer-events:none;opacity:0;transition:opacity .4s;}
-#fxGtaCanvas.active,#fxMgsCanvas.active,#fxShCanvas.active{opacity:1;}
+.fx-canvas-layer{position:fixed;inset:0;z-index:-1;pointer-events:none;opacity:0;transition:opacity .4s;}
+.fx-canvas-layer.active{opacity:1;}
+.fx-group-label{font-size:.72rem;color:var(--muted);font-weight:800;margin:14px 0 2px;padding-top:10px;border-top:1px dashed var(--border);}
+.fx-group-label:first-of-type{border-top:none;padding-top:0;margin-top:6px;}
 </style>`);
 
 const fxLayer = (id) => {
@@ -7731,6 +7743,7 @@ const fxLayer = (id) => {
   if (!c) {
     c = document.createElement('canvas');
     c.id = id;
+    c.className = 'fx-canvas-layer';
     document.body.appendChild(c);
   }
   return c;
@@ -7740,7 +7753,6 @@ const fxLayer = (id) => {
 const _mcStyleFix = document.createElement('style');
 _mcStyleFix.textContent = `#matrixCanvas.active{opacity:.32 !important;}`;
 document.head.appendChild(_mcStyleFix);
-let _origStartMatrixRain = window.startMatrixRain;
 window.startMatrixRain = function () {
   const canvas = document.getElementById('matrixCanvas');
   const ctx = canvas.getContext('2d');
@@ -7776,134 +7788,260 @@ window.startMatrixRain = function () {
   draw();
 };
 
-// --- GTA / synthwave: scrolling neon grid + sun ---
-let _gtaAnim = null;
-function toggleGtaEffect(on) {
-  DB.settings.gtaFx = on; saveDB();
-  const canvas = fxLayer('fxGtaCanvas');
-  if (on) { canvas.classList.add('active'); startGtaEffect(); }
-  else { canvas.classList.remove('active'); if (_gtaAnim) cancelAnimationFrame(_gtaAnim); }
-}
-function startGtaEffect() {
-  const canvas = document.getElementById('fxGtaCanvas');
-  const ctx = canvas.getContext('2d');
-  let W, H, t = 0;
-  function resize() { W = canvas.width = innerWidth; H = canvas.height = innerHeight; }
-  resize(); window.addEventListener('resize', resize);
-  function draw() {
-    if (!DB.settings.gtaFx) return;
-    const horizon = H * 0.62;
-    const grad = ctx.createLinearGradient(0, 0, 0, horizon);
-    grad.addColorStop(0, '#1a0a2e'); grad.addColorStop(1, '#ff2f8f22');
-    ctx.fillStyle = grad; ctx.fillRect(0, 0, W, horizon);
-    ctx.fillStyle = '#0a0014'; ctx.fillRect(0, horizon, W, H - horizon);
-    // sun
-    const sunR = Math.min(W, H) * 0.16;
-    const sg = ctx.createLinearGradient(0, horizon - sunR * 2, 0, horizon);
-    sg.addColorStop(0, '#ffd23f'); sg.addColorStop(0.5, '#ff5e7e'); sg.addColorStop(1, '#c026d3');
-    ctx.fillStyle = sg;
-    ctx.beginPath(); ctx.arc(W / 2, horizon - sunR * 0.3, sunR, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = '#0a0014';
-    for (let i = 0; i < 6; i++) ctx.fillRect(W / 2 - sunR, horizon - sunR * 0.6 + i * 8 - (t % 8), sunR * 2, 3);
-    // grid
-    ctx.strokeStyle = '#00eaff88'; ctx.lineWidth = 1.4;
-    for (let i = -10; i <= 10; i++) {
-      ctx.beginPath(); ctx.moveTo(W / 2 + i * 60, horizon); ctx.lineTo(W / 2 + i * (W * 0.6), H); ctx.stroke();
+// ── Generic reusable canvas-particle engine (keeps the many themed effects small) ──
+const _fxAnims = {};
+function makeFxEffect(canvasId, settingsKey, opts) {
+  function stop() { if (_fxAnims[canvasId]) cancelAnimationFrame(_fxAnims[canvasId]); }
+  function start() {
+    const canvas = fxLayer(canvasId);
+    const ctx = canvas.getContext('2d');
+    let W, H, particles = [], t = 0;
+    function resize() {
+      W = canvas.width = innerWidth; H = canvas.height = innerHeight;
+      particles = Array.from({ length: opts.count || 60 }, () => opts.spawn(W, H));
     }
-    for (let j = 0; j < 14; j++) {
-      const yy = horizon + Math.pow(j / 14, 2.2) * (H - horizon);
-      ctx.beginPath(); ctx.moveTo(0, yy); ctx.lineTo(W, yy); ctx.globalAlpha = 0.6; ctx.stroke(); ctx.globalAlpha = 1;
+    resize();
+    const onResize = () => resize();
+    window.addEventListener('resize', onResize);
+    function draw() {
+      if (!DB.settings[settingsKey]) { window.removeEventListener('resize', onResize); return; }
+      if (opts.trail) { ctx.fillStyle = opts.trail; ctx.fillRect(0, 0, W, H); }
+      else ctx.clearRect(0, 0, W, H);
+      if (opts.bg) opts.bg(ctx, W, H, t);
+      particles.forEach(p => { opts.update(p, W, H, t); opts.draw(ctx, p, t); });
+      if (opts.overlay) opts.overlay(ctx, W, H, t, particles);
+      t++;
+      _fxAnims[canvasId] = requestAnimationFrame(draw);
     }
-    t += 1;
-    _gtaAnim = requestAnimationFrame(draw);
+    draw();
   }
-  draw();
+  return function toggle(on) {
+    DB.settings[settingsKey] = on; saveDB();
+    const canvas = fxLayer(canvasId);
+    if (on) { canvas.classList.add('active'); start(); }
+    else { canvas.classList.remove('active'); stop(); }
+  };
 }
 
-// --- Metal Gear Solid: codec scanlines + radar sweep ---
-let _mgsAnim = null;
-function toggleMgsEffect(on) {
-  DB.settings.mgsFx = on; saveDB();
-  const canvas = fxLayer('fxMgsCanvas');
-  if (on) { canvas.classList.add('active'); startMgsEffect(); }
-  else { canvas.classList.remove('active'); if (_mgsAnim) cancelAnimationFrame(_mgsAnim); }
-}
-function startMgsEffect() {
-  const canvas = document.getElementById('fxMgsCanvas');
-  const ctx = canvas.getContext('2d');
-  let W, H, sweep = 0;
-  function resize() { W = canvas.width = innerWidth; H = canvas.height = innerHeight; }
-  resize(); window.addEventListener('resize', resize);
-  function draw() {
-    if (!DB.settings.mgsFx) return;
-    ctx.clearRect(0, 0, W, H);
-    ctx.fillStyle = 'rgba(0,10,0,0.05)'; ctx.fillRect(0, 0, W, H);
-    // scanlines
-    ctx.strokeStyle = 'rgba(0,255,120,0.06)';
-    for (let y = 0; y < H; y += 3) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
-    // radar in bottom corner
-    const cx = W - 90, cy = H - 90, r = 60;
-    ctx.strokeStyle = 'rgba(0,255,120,0.5)'; ctx.lineWidth = 1.5;
-    ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.stroke();
-    ctx.beginPath(); ctx.arc(cx, cy, r * 0.6, 0, Math.PI * 2); ctx.stroke();
-    sweep += 0.05;
-    ctx.save();
-    ctx.translate(cx, cy); ctx.rotate(sweep);
-    const rg = ctx.createLinearGradient(0, 0, r, 0);
-    rg.addColorStop(0, 'rgba(0,255,120,0.45)'); rg.addColorStop(1, 'rgba(0,255,120,0)');
-    ctx.fillStyle = rg;
-    ctx.beginPath(); ctx.moveTo(0, 0); ctx.arc(0, 0, r, -0.5, 0.5); ctx.closePath(); ctx.fill();
-    ctx.restore();
-    // corner brackets (codec frame feel)
-    ctx.strokeStyle = 'rgba(0,255,120,0.35)'; ctx.lineWidth = 2;
-    const m = 18, len = 26;
-    [[m, m, 1, 1], [W - m, m, -1, 1], [m, H - m, 1, -1], [W - m, H - m, -1, -1]].forEach(([x, y, dx, dy]) => {
-      ctx.beginPath(); ctx.moveTo(x, y + len * dy); ctx.lineTo(x, y); ctx.lineTo(x + len * dx, y); ctx.stroke();
-    });
-    _mgsAnim = requestAnimationFrame(draw);
-  }
-  draw();
-}
-
-// --- Silent Hill: fog + grain + drifting ash ---
-let _shAnim = null;
-function toggleShEffect(on) {
-  DB.settings.shFx = on; saveDB();
-  const canvas = fxLayer('fxShCanvas');
-  if (on) { canvas.classList.add('active'); startShEffect(); }
-  else { canvas.classList.remove('active'); if (_shAnim) cancelAnimationFrame(_shAnim); }
-}
-function startShEffect() {
-  const canvas = document.getElementById('fxShCanvas');
-  const ctx = canvas.getContext('2d');
-  let W, H, ash = [];
-  function resize() {
-    W = canvas.width = innerWidth; H = canvas.height = innerHeight;
-    ash = Array.from({ length: 70 }, () => ({ x: Math.random() * W, y: Math.random() * H, r: Math.random() * 1.8 + .3, vy: Math.random() * .3 + .1, vx: (Math.random() - .5) * .3 }));
-  }
-  resize(); window.addEventListener('resize', resize);
-  function draw() {
-    if (!DB.settings.shFx) return;
-    ctx.clearRect(0, 0, W, H);
-    // grain
-    const n = 400;
-    ctx.fillStyle = 'rgba(255,255,255,0.03)';
+// ── Silent Hill: fog + grain + drifting ash ──
+window.toggleShEffect = makeFxEffect('fxShCanvas', 'shFx', {
+  count: 70,
+  spawn: (W, H) => ({ x: Math.random() * W, y: Math.random() * H, r: Math.random() * 1.8 + .3, vy: Math.random() * .3 + .1, vx: (Math.random() - .5) * .3 }),
+  update: (p, W, H) => { p.y += p.vy; p.x += p.vx; if (p.y > H) p.y = -5; },
+  draw: (ctx, p) => { ctx.fillStyle = 'rgba(210,210,210,0.5)'; ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2); ctx.fill(); },
+  bg: (ctx, W, H) => {
+    const n = 400; ctx.fillStyle = 'rgba(255,255,255,0.03)';
     for (let i = 0; i < n; i++) ctx.fillRect(Math.random() * W, Math.random() * H, 1, 1);
-    // fog vignette
     const g = ctx.createRadialGradient(W / 2, H / 2, H * 0.2, W / 2, H / 2, H * 0.9);
     g.addColorStop(0, 'rgba(120,120,120,0)'); g.addColorStop(1, 'rgba(40,40,40,0.55)');
     ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
-    // drifting ash
-    ctx.fillStyle = 'rgba(210,210,210,0.5)';
-    ash.forEach(p => {
-      p.y += p.vy; p.x += p.vx;
-      if (p.y > H) p.y = -5;
-      ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2); ctx.fill();
-    });
-    _shAnim = requestAnimationFrame(draw);
   }
-  draw();
-}
+});
+
+// ── Metal Gear Solid V: iDroid HUD / tactical CQC scan ──
+window.toggleMgsvEffect = makeFxEffect('fxMgsvCanvas', 'mgsvFx', {
+  count: 0,
+  spawn: () => ({}),
+  update: () => {}, draw: () => {},
+  bg: (ctx, W, H, t) => {
+    ctx.fillStyle = 'rgba(0,8,4,0.06)'; ctx.fillRect(0, 0, W, H);
+    ctx.strokeStyle = 'rgba(255,140,0,0.05)';
+    for (let y = 0; y < H; y += 3) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
+  },
+  overlay: (ctx, W, H, t) => {
+    const cx = W - 100, cy = H - 100, r = 66;
+    ctx.strokeStyle = 'rgba(255,150,20,0.55)'; ctx.lineWidth = 1.4;
+    ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.arc(cx, cy, r * 0.55, 0, Math.PI * 2); ctx.stroke();
+    for (let i = 0; i < 12; i++) {
+      const a = (i / 12) * Math.PI * 2;
+      ctx.beginPath(); ctx.moveTo(cx + Math.cos(a) * r * 0.55, cy + Math.sin(a) * r * 0.55);
+      ctx.lineTo(cx + Math.cos(a) * r, cy + Math.sin(a) * r); ctx.stroke();
+    }
+    const sweep = (t * 0.04) % (Math.PI * 2);
+    ctx.save(); ctx.translate(cx, cy); ctx.rotate(sweep);
+    const rg = ctx.createLinearGradient(0, 0, r, 0);
+    rg.addColorStop(0, 'rgba(255,150,20,0.5)'); rg.addColorStop(1, 'rgba(255,150,20,0)');
+    ctx.fillStyle = rg; ctx.beginPath(); ctx.moveTo(0, 0); ctx.arc(0, 0, r, -0.45, 0.45); ctx.closePath(); ctx.fill();
+    ctx.restore();
+    // HUD frame corners
+    ctx.strokeStyle = 'rgba(255,150,20,0.4)'; ctx.lineWidth = 2;
+    const m = 18, len = 30;
+    [[m, m, 1, 1], [W - m, m, -1, 1], [m, H - m, 1, -1], [W - m, H - m, -1, -1]].forEach(([x, y, dx, dy]) => {
+      ctx.beginPath(); ctx.moveTo(x, y + len * dy); ctx.lineTo(x, y); ctx.lineTo(x + len * dx, y); ctx.stroke();
+    });
+    ctx.font = '10px monospace'; ctx.fillStyle = 'rgba(255,150,20,0.5)';
+    ctx.fillText('IDROID // OKB ZERO', 20, H - 20);
+  }
+});
+
+// ── Metal Gear Solid 3 Snake Eater: jungle camo / sepia CQC ──
+window.toggleSnakeEaterEffect = makeFxEffect('fxSnakeEaterCanvas', 'snakeeaterFx', {
+  count: 50,
+  spawn: (W, H) => ({ x: Math.random() * W, y: Math.random() * H, r: Math.random() * 2 + 1, vy: Math.random() * .25 + .05, sway: Math.random() * Math.PI * 2 }),
+  update: (p, W, H) => { p.y += p.vy; p.sway += 0.02; p.x += Math.sin(p.sway) * 0.3; if (p.y > H) p.y = -5; },
+  draw: (ctx, p) => { ctx.fillStyle = 'rgba(120,140,60,0.45)'; ctx.beginPath(); ctx.ellipse(p.x, p.y, p.r * 1.6, p.r, 0, 0, Math.PI * 2); ctx.fill(); },
+  bg: (ctx, W, H) => {
+    const g = ctx.createLinearGradient(0, 0, 0, H);
+    g.addColorStop(0, 'rgba(60,58,30,0.10)'); g.addColorStop(1, 'rgba(20,26,10,0.28)');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    const vg = ctx.createRadialGradient(W / 2, H / 2, H * 0.25, W / 2, H / 2, H * 0.85);
+    vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, 'rgba(20,15,5,0.5)');
+    ctx.fillStyle = vg; ctx.fillRect(0, 0, W, H);
+  },
+  overlay: (ctx, W, H) => {
+    ctx.font = '10px monospace'; ctx.fillStyle = 'rgba(200,190,140,0.4)';
+    ctx.fillText('CQC // BOSS FREQ 141.80', 20, H - 20);
+  }
+});
+
+// ── Bleach: falling black petals + red reiatsu wisps ──
+window.toggleBleachEffect = makeFxEffect('fxBleachCanvas', 'bleachFx', {
+  count: 45,
+  spawn: (W, H) => ({ x: Math.random() * W, y: Math.random() * H, r: Math.random() * 3 + 2, vy: Math.random() * .8 + .3, sway: Math.random() * Math.PI * 2, red: Math.random() > 0.7 }),
+  update: (p, W, H) => { p.y += p.vy; p.sway += 0.03; p.x += Math.sin(p.sway) * 0.6; if (p.y > H) { p.y = -5; p.x = Math.random() * W; } },
+  draw: (ctx, p) => {
+    ctx.fillStyle = p.red ? 'rgba(220,20,40,0.5)' : 'rgba(15,15,20,0.65)';
+    ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.sway);
+    ctx.beginPath(); ctx.ellipse(0, 0, p.r, p.r * 0.5, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  },
+  bg: (ctx, W, H) => { const g = ctx.createLinearGradient(0, 0, 0, H); g.addColorStop(0, 'rgba(20,0,5,0.05)'); g.addColorStop(1, 'rgba(0,0,0,0.12)'); ctx.fillStyle = g; ctx.fillRect(0, 0, W, H); }
+});
+
+// ── Naruto: swirling leaves + chakra glow ──
+window.toggleNarutoEffect = makeFxEffect('fxNarutoCanvas', 'narutoFx', {
+  count: 40,
+  spawn: (W, H) => ({ x: Math.random() * W, y: Math.random() * H, r: Math.random() * 4 + 3, vy: Math.random() * .6 + .2, sway: Math.random() * Math.PI * 2 }),
+  update: (p, W, H) => { p.y += p.vy; p.sway += 0.04; p.x += Math.sin(p.sway) * 0.8; if (p.y > H) { p.y = -5; p.x = Math.random() * W; } },
+  draw: (ctx, p) => {
+    ctx.fillStyle = 'rgba(230,150,30,0.55)';
+    ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.sway * 2);
+    ctx.beginPath(); ctx.moveTo(0, -p.r); ctx.quadraticCurveTo(p.r, 0, 0, p.r); ctx.quadraticCurveTo(-p.r, 0, 0, -p.r); ctx.fill();
+    ctx.restore();
+  },
+  bg: (ctx, W, H) => { const g = ctx.createRadialGradient(W / 2, H, 0, W / 2, H, H); g.addColorStop(0, 'rgba(255,140,0,0.06)'); g.addColorStop(1, 'rgba(20,10,0,0.1)'); ctx.fillStyle = g; ctx.fillRect(0, 0, W, H); }
+});
+
+// ── One Piece: ocean waves + treasure sparkle ──
+window.toggleOnePieceEffect = makeFxEffect('fxOnePieceCanvas', 'onepieceFx', {
+  count: 26,
+  spawn: (W, H) => ({ x: Math.random() * W, y: H * (0.55 + Math.random() * 0.4), r: Math.random() * 2 + 1, tw: Math.random() * Math.PI * 2 }),
+  update: (p) => { p.tw += 0.06; },
+  draw: (ctx, p) => { ctx.globalAlpha = (Math.sin(p.tw) + 1) / 2 * .8 + .2; ctx.fillStyle = '#ffe98a'; ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2); ctx.fill(); ctx.globalAlpha = 1; },
+  bg: (ctx, W, H, t) => {
+    const g = ctx.createLinearGradient(0, 0, 0, H);
+    g.addColorStop(0, 'rgba(10,40,80,0.05)'); g.addColorStop(1, 'rgba(0,60,110,0.18)');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    ctx.strokeStyle = 'rgba(180,225,255,0.25)'; ctx.lineWidth = 2;
+    for (let w = 0; w < 4; w++) {
+      ctx.beginPath();
+      const baseY = H * (0.55 + w * 0.12);
+      for (let x = 0; x <= W; x += 20) ctx.lineTo(x, baseY + Math.sin(x * 0.02 + t * 0.03 + w) * 8);
+      ctx.stroke();
+    }
+  }
+});
+
+// ── Sword Art Online: floating digital menu panels ──
+window.toggleSaoEffect = makeFxEffect('fxSaoCanvas', 'saoFx', {
+  count: 22,
+  spawn: (W, H) => ({ x: Math.random() * W, y: Math.random() * H, w: Math.random() * 30 + 14, vy: (Math.random() - .5) * .3, vx: (Math.random() - .5) * .3, a: Math.random() }),
+  update: (p, W, H) => { p.y += p.vy; p.x += p.vx; if (p.x < 0) p.x = W; if (p.x > W) p.x = 0; if (p.y < 0) p.y = H; if (p.y > H) p.y = 0; },
+  draw: (ctx, p) => {
+    ctx.strokeStyle = 'rgba(70,180,255,0.5)'; ctx.lineWidth = 1;
+    ctx.strokeRect(p.x, p.y, p.w, p.w * 0.6);
+    ctx.fillStyle = 'rgba(70,180,255,0.12)'; ctx.fillRect(p.x, p.y, p.w, p.w * 0.6);
+  },
+  bg: (ctx, W, H) => { ctx.fillStyle = 'rgba(0,10,25,0.05)'; ctx.fillRect(0, 0, W, H); },
+  overlay: (ctx, W, H, t) => {
+    ctx.strokeStyle = 'rgba(140,210,255,0.15)';
+    for (let x = 0; x < W; x += 46) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke(); }
+  }
+});
+
+// ── Frieren: soft drifting stardust + muted fantasy glow ──
+window.toggleFrierenEffect = makeFxEffect('fxFrierenCanvas', 'frierenFx', {
+  count: 55,
+  spawn: (W, H) => ({ x: Math.random() * W, y: Math.random() * H, r: Math.random() * 1.6 + .4, vy: -(Math.random() * .25 + .05), tw: Math.random() * Math.PI * 2 }),
+  update: (p, W, H) => { p.y += p.vy; p.tw += 0.03; if (p.y < -5) p.y = H + 5; },
+  draw: (ctx, p) => { ctx.globalAlpha = (Math.sin(p.tw) + 1) / 2 * .7 + .15; ctx.fillStyle = '#cdeaff'; ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2); ctx.fill(); ctx.globalAlpha = 1; },
+  bg: (ctx, W, H) => { const g = ctx.createLinearGradient(0, 0, 0, H); g.addColorStop(0, 'rgba(120,150,190,0.04)'); g.addColorStop(1, 'rgba(60,70,100,0.10)'); ctx.fillStyle = g; ctx.fillRect(0, 0, W, H); }
+});
+
+// ── Hitman: falling barcodes + cold spotlight ──
+window.toggleHitmanEffect = makeFxEffect('fxHitmanCanvas', 'hitmanFx', {
+  count: 20,
+  spawn: (W, H) => ({ x: Math.random() * W, y: Math.random() * H, vy: Math.random() * .4 + .15, w: Math.random() * 18 + 10 }),
+  update: (p, W, H) => { p.y += p.vy; if (p.y > H) p.y = -10; },
+  draw: (ctx, p) => {
+    ctx.fillStyle = 'rgba(220,20,20,0.5)';
+    for (let i = 0; i < 5; i++) ctx.fillRect(p.x + i * 3, p.y, i % 2 ? 1 : 2, 8);
+  },
+  bg: (ctx, W, H) => {
+    ctx.fillStyle = 'rgba(0,0,0,0.10)'; ctx.fillRect(0, 0, W, H);
+    const g = ctx.createRadialGradient(W / 2, H * 0.3, 0, W / 2, H * 0.3, H * 0.7);
+    g.addColorStop(0, 'rgba(255,255,255,0.05)'); g.addColorStop(1, 'rgba(0,0,0,0.35)');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  }
+});
+
+// ── Red Dead Redemption: dusty prairie haze + sun glare ──
+window.toggleRdrEffect = makeFxEffect('fxRdrCanvas', 'rdrFx', {
+  count: 40,
+  spawn: (W, H) => ({ x: Math.random() * W, y: Math.random() * H, r: Math.random() * 1.4 + .3, vx: Math.random() * .3 + .1, vy: (Math.random() - .5) * .1 }),
+  update: (p, W) => { p.x += p.vx; p.y += p.vy; if (p.x > W) p.x = -5; },
+  draw: (ctx, p) => { ctx.fillStyle = 'rgba(210,170,110,0.35)'; ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2); ctx.fill(); },
+  bg: (ctx, W, H) => {
+    const g = ctx.createLinearGradient(0, 0, 0, H);
+    g.addColorStop(0, 'rgba(255,190,120,0.08)'); g.addColorStop(1, 'rgba(120,70,30,0.12)');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    const sun = ctx.createRadialGradient(W * 0.78, H * 0.22, 0, W * 0.78, H * 0.22, H * 0.35);
+    sun.addColorStop(0, 'rgba(255,220,150,0.35)'); sun.addColorStop(1, 'rgba(255,220,150,0)');
+    ctx.fillStyle = sun; ctx.fillRect(0, 0, W, H);
+  }
+});
+
+// ── The Last of Us: airborne fungal spores ──
+window.toggleTlouEffect = makeFxEffect('fxTlouCanvas', 'tlouFx', {
+  count: 50,
+  spawn: (W, H) => ({ x: Math.random() * W, y: Math.random() * H, r: Math.random() * 2 + .8, vy: -(Math.random() * .2 + .04), sway: Math.random() * Math.PI * 2 }),
+  update: (p, W, H) => { p.y += p.vy; p.sway += 0.02; p.x += Math.sin(p.sway) * 0.3; if (p.y < -5) p.y = H + 5; },
+  draw: (ctx, p) => { ctx.fillStyle = 'rgba(140,200,90,0.4)'; ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2); ctx.fill(); },
+  bg: (ctx, W, H) => { const g = ctx.createLinearGradient(0, 0, 0, H); g.addColorStop(0, 'rgba(30,40,20,0.08)'); g.addColorStop(1, 'rgba(10,20,10,0.18)'); ctx.fillStyle = g; ctx.fillRect(0, 0, W, H); }
+});
+
+// ── Death Stranding: orange BT rain + tether constellation ──
+window.toggleDsEffect = makeFxEffect('fxDsCanvas', 'dsFx', {
+  count: 60,
+  spawn: (W, H) => ({ x: Math.random() * W, y: Math.random() * H, len: Math.random() * 14 + 8, vy: Math.random() * 4 + 3 }),
+  update: (p, W, H) => { p.y += p.vy; if (p.y > H) { p.y = -10; p.x = Math.random() * W; } },
+  draw: (ctx, p) => { ctx.strokeStyle = 'rgba(255,150,60,0.35)'; ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(p.x, p.y + p.len); ctx.stroke(); },
+  bg: (ctx, W, H) => { ctx.fillStyle = 'rgba(10,10,15,0.10)'; ctx.fillRect(0, 0, W, H); },
+  overlay: (ctx, W, H, t, particles) => {
+    ctx.strokeStyle = 'rgba(255,150,60,0.08)';
+    for (let i = 0; i < particles.length; i += 6) {
+      const a = particles[i], b = particles[(i + 6) % particles.length];
+      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+    }
+  }
+});
+
+// ── Outlast: night-vision static + green grain ──
+window.toggleOutlastEffect = makeFxEffect('fxOutlastCanvas', 'outlastFx', {
+  count: 0, spawn: () => ({}), update: () => {}, draw: () => {},
+  bg: (ctx, W, H) => {
+    const g = ctx.createLinearGradient(0, 0, 0, H);
+    g.addColorStop(0, 'rgba(10,40,15,0.10)'); g.addColorStop(1, 'rgba(0,20,5,0.28)');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = 'rgba(150,255,170,0.04)';
+    for (let i = 0; i < 500; i++) ctx.fillRect(Math.random() * W, Math.random() * H, 1, 1);
+    const vg = ctx.createRadialGradient(W / 2, H / 2, H * 0.15, W / 2, H / 2, H * 0.75);
+    vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, 'rgba(0,10,0,0.6)');
+    ctx.fillStyle = vg; ctx.fillRect(0, 0, W, H);
+  },
+  overlay: (ctx, W, H, t) => { if (Math.floor(t / 30) % 4 === 0) { ctx.fillStyle = 'rgba(150,255,170,0.03)'; ctx.fillRect(0, 0, W, H); } }
+});
 
 // ── F. Neon Pulse & Glass Frost — extra distinct theme variants ──
 const EXTRA_SPECIAL_THEMES = [
@@ -7945,29 +8083,57 @@ window.changeTheme = function (themeId) {
   if (typeof renderThemeGrid === 'function') renderThemeGrid();
 };
 
-// ── G. Add toggle rows for the 3 new background effects inside the appearance card ──
+// ── G. Add toggle rows for all the new background effects inside the appearance card ──
 (function injectFxToggles() {
-  const bgCard = document.getElementById('toggleMatrix');
-  if (!bgCard) return;
-  const row = bgCard.closest('.toggle-wrap');
+  const anchor = document.getElementById('toggleMatrix');
+  if (!anchor) return;
+  const row = anchor.closest('.toggle-wrap');
   const container = row ? row.parentElement : null;
   if (!container) return;
-  const mk = (id, labelAr, labelEn, checked, onFn) => {
+  const mk = (id, labelAr, labelEn, key, toggleFnName, groupLabel) => {
+    if (groupLabel) {
+      const lbl = document.createElement('div');
+      lbl.className = 'fx-group-label';
+      lbl.textContent = _t(groupLabel[0], groupLabel[1]);
+      container.appendChild(lbl);
+    }
     const div = document.createElement('div');
     div.className = 'toggle-wrap';
     div.innerHTML = `<span>${_t(labelAr, labelEn)}</span>
-      <label class="toggle"><input type="checkbox" id="${id}" ${checked ? 'checked' : ''} onchange="${onFn}(this.checked)"><span class="toggle-slider"></span></label>`;
+      <label class="toggle"><input type="checkbox" id="${id}" ${DB.settings[key] ? 'checked' : ''} onchange="window['${toggleFnName}'](this.checked)"><span class="toggle-slider"></span></label>`;
     container.appendChild(div);
   };
-  mk('toggleGta', 'تأثير GTA (نيون غروب)', 'GTA effect (neon sunset)', !!DB.settings.gtaFx, 'toggleGtaEffect');
-  mk('toggleMgs', 'تأثير Metal Gear (رادار تكتيكي)', 'Metal Gear effect (tactical radar)', !!DB.settings.mgsFx, 'toggleMgsEffect');
-  mk('toggleSh', 'تأثير Silent Hill (ضباب ورماد)', 'Silent Hill effect (fog & ash)', !!DB.settings.shFx, 'toggleShEffect');
-  if (DB.settings.gtaFx) toggleGtaEffect(true);
-  if (DB.settings.mgsFx) toggleMgsEffect(true);
+  mk('toggleSh', 'تأثير Silent Hill (ضباب ورماد)', 'Silent Hill (fog & ash)', 'shFx', 'toggleShEffect', ['ألعاب', 'Games']);
+  mk('toggleMgsv', 'تأثير Metal Gear Solid V (رادار تكتيكي)', 'Metal Gear Solid V (tactical radar)', 'mgsvFx', 'toggleMgsvEffect');
+  mk('toggleSnakeEater', 'تأثير MGS3: Snake Eater (غابة/تمويه)', 'MGS3: Snake Eater (jungle camo)', 'snakeeaterFx', 'toggleSnakeEaterEffect');
+  mk('toggleHitman', 'تأثير Hitman (باركود وسبوت لايت)', 'Hitman (barcode & spotlight)', 'hitmanFx', 'toggleHitmanEffect');
+  mk('toggleRdr', 'تأثير Red Dead Redemption (غبار وغروب)', 'Red Dead Redemption (dust & sunset)', 'rdrFx', 'toggleRdrEffect');
+  mk('toggleTlou', 'تأثير The Last of Us (أبواغ فطرية)', 'The Last of Us (fungal spores)', 'tlouFx', 'toggleTlouEffect');
+  mk('toggleDs', 'تأثير Death Stranding (مطر BT)', 'Death Stranding (BT rain)', 'dsFx', 'toggleDsEffect');
+  mk('toggleOutlast', 'تأثير Outlast (رؤية ليلية)', 'Outlast (night vision)', 'outlastFx', 'toggleOutlastEffect');
+  mk('toggleBleach', 'تأثير Bleach (بتلات وروح)', 'Bleach (petals & reiatsu)', 'bleachFx', 'toggleBleachEffect', ['أنمي', 'Anime']);
+  mk('toggleNaruto', 'تأثير Naruto (أوراق وتشاكرا)', 'Naruto (leaves & chakra)', 'narutoFx', 'toggleNarutoEffect');
+  mk('toggleOnePiece', 'تأثير One Piece (أمواج وكنز)', 'One Piece (waves & treasure)', 'onepieceFx', 'toggleOnePieceEffect');
+  mk('toggleSao', 'تأثير Sword Art Online (نوافذ رقمية)', 'Sword Art Online (digital panels)', 'saoFx', 'toggleSaoEffect');
+  mk('toggleFrieren', 'تأثير Frieren (غبار نجمي هادئ)', 'Frieren (soft stardust)', 'frierenFx', 'toggleFrierenEffect');
+
   if (DB.settings.shFx) toggleShEffect(true);
+  if (DB.settings.mgsvFx) toggleMgsvEffect(true);
+  if (DB.settings.snakeeaterFx) toggleSnakeEaterEffect(true);
+  if (DB.settings.hitmanFx) toggleHitmanEffect(true);
+  if (DB.settings.rdrFx) toggleRdrEffect(true);
+  if (DB.settings.tlouFx) toggleTlouEffect(true);
+  if (DB.settings.dsFx) toggleDsEffect(true);
+  if (DB.settings.outlastFx) toggleOutlastEffect(true);
+  if (DB.settings.bleachFx) toggleBleachEffect(true);
+  if (DB.settings.narutoFx) toggleNarutoEffect(true);
+  if (DB.settings.onepieceFx) toggleOnePieceEffect(true);
+  if (DB.settings.saoFx) toggleSaoEffect(true);
+  if (DB.settings.frierenFx) toggleFrierenEffect(true);
 })();
 
 // ── H. Button label overflow fix is handled in CSS patch; re-run auto-translate once more now that new UI exists ──
+
 _scheduleAutoTranslate();
 </script>
 </body>
